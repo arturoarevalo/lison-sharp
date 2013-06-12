@@ -12,147 +12,133 @@ namespace Lison
 	using System.Reflection;
 	using System.Reflection.Emit;
 
-	public static class Serializer
+
+	public class TypeDefinition
 	{
-		public static void WriteType (Type type, TextWriter writer, bool member = false)
+		public string Definition { get; protected set; }
+
+		public TypeDefinition (Type type)
 		{
-			if (IsPrimitiveType (type))
-			{
-				writer.Write (member ? "#s" : "%s");
+			StringBuilder builder = new StringBuilder();
+			WriteType (type, builder, false);
+
+			Definition = builder.ToString ();
+		}
+
+		private static void WriteType (Type type, StringBuilder builder, bool member)
+		{
+			// Primitive types.
+			if (IsPrimitiveType (type)) {
+				builder.Append (member ? "#s" : "#S");
 				return;
 			}
 
-			if (IsGenericDictionary (type))
-			{
-				writer.Write (member ? "#D" : "%D");
+			// Dictionaries.
+			if (IsGenericDictionary (type)) {
+				builder.Append (member ? "<d" : "<D");
 
-				writer.Write ("k");
-				WriteType (type.GetGenericArguments () [0], writer);
+				builder.Append ("k");
+				WriteType (type.GetGenericArguments () [0], builder, false);
 
-				writer.Write ("v");
-				WriteType (type.GetGenericArguments () [1], writer);
+				builder.Append ("v");
+				WriteType (type.GetGenericArguments () [1], builder, false);
 
-				writer.Write (member ? "#d" : "%d");
+				builder.Append (member ? "/d" : "/D");
 
 				return;
 			}
 
-			if (type.IsArray || IsGenericEnumerable (type))
-			{
+			// Enumerations.
+			if (type.IsArray || IsGenericEnumerable (type)) {
 				Type elementType = type.IsArray ? type.GetElementType () : type.GetGenericArguments () [0];
 
-				writer.Write (member ? "#A" : "%A");
-				WriteType (elementType, writer, false);
-				writer.Write (member ? "#a" : "%a");
+				builder.Append (member ? "<a" : "<A");
+				WriteType (elementType, builder, false);
+				builder.Append (member ? "/a" : "/A");
 
 				return;
 			}
 
-			writer.Write (member ? "#O" : "%O");
-			foreach (var getter in Helpers.GetterCollection.FromType (type))
-			{
-				writer.Write (getter.Name);
-				WriteType (getter.PropertyType, writer, true);
+			// Objects.
+			builder.Append (member ? "<o" : "<O");
+			foreach (var getter in Helpers.GetterCollection.FromType (type)) {
+				builder.Append (getter.Name);
+				WriteType (getter.PropertyType, builder, true);
 			}
-			writer.Write (member ? "#o" : "%o");
+			builder.Append (member ? "/o" : "/O");
 		}
 
 		public static bool IsGenericDictionary (Type type)
 		{
-			foreach (Type iType in type.GetInterfaces ())
-			{
-				if (iType.IsGenericType && iType.GetGenericTypeDefinition ()
-				    == typeof (IDictionary <,>))
-				{
-					return true;
-				}
-			}
-
-			return false;
+			return type
+				.GetInterfaces ()
+				.Any (iType => iType.IsGenericType && iType.GetGenericTypeDefinition () == typeof (IDictionary<,>));
 		}
-
-
 
 		public static bool IsGenericEnumerable (Type type)
 		{
-			foreach (Type iType in type.GetInterfaces ())
-			{
-				if (iType.IsGenericType && iType.GetGenericTypeDefinition ()
-				    == typeof (IEnumerable <>))
-				{
-					return true;
-				}
-			}
-
-			return false;
+			return type
+				.GetInterfaces ()
+				.Any (iType => iType.IsGenericType && iType.GetGenericTypeDefinition () == typeof (IEnumerable<>));
 		}
 
+		private static bool IsPrimitiveType (Type obj)
+		{
+			return obj == typeof (DBNull) ||
+				   obj == typeof (string) || obj == typeof (char) ||
+				   obj == typeof (Guid) || obj == typeof (Enum) ||
+				   obj == typeof (bool) || obj == typeof (DateTime) ||
+				   obj == typeof (int) || obj == typeof (long) || obj == typeof (double) ||
+				   obj == typeof (decimal) || obj == typeof (float) ||
+				   obj == typeof (byte) || obj == typeof (short) ||
+				   obj == typeof (sbyte) || obj == typeof (ushort) ||
+				   obj == typeof (uint) || obj == typeof (ulong) ||
+				   obj == typeof (byte []);
+		}
 
-		public static void WriteDefinition (object obj, TextWriter writer)
+		private static readonly Dictionary <Type, TypeDefinition> cache = new Dictionary <Type, TypeDefinition> ();
+
+		public static TypeDefinition ForType (Type type)
+		{
+			lock (cache)
+			{
+				TypeDefinition value;
+
+				if (!cache.TryGetValue (type, out value))
+				{
+					value = new TypeDefinition (type);
+					cache.Add (type, value);
+				}
+
+				return value;
+			}
+		}
+	}
+
+	public static class Serializer
+	{
+		public const string Version = "LiSON1";
+		public const char Separator = '|';
+
+		public static void Serialize <T> (TextWriter writer, T obj)
+		{
+			// Write version number.
+			writer.Write (Version);
+
+			// Write type definition.
+			writer.Write (Separator);
+			writer.Write (TypeDefinition.ForType (typeof (T)).Definition);
+
+			// Write object data.
+			WriteObject (writer, obj);
+		}
+
+		private static void WriteObject (TextWriter writer, object obj )
 		{
 			if (IsPrimitiveType (obj))
 			{
-				writer.Write ("#s");
-				return;
-			}
-
-			if (obj is IDictionary)
-			{
-				var dict = obj as IDictionary;
-
-				writer.Write (dict.Count.ToString ());
-				writer.Write ((char) 0x000C);
-
-				foreach (DictionaryEntry k in dict)
-				{
-					WriteObject (k.Key, writer);
-					WriteObject (k.Value, writer);
-				}
-
-				return;
-			}
-
-			if (obj is IEnumerable)
-			{
-				var enu = obj as IEnumerable;
-				int count = 0;
-
-				if (enu is ICollection)
-				{
-					count = (enu as ICollection).Count;
-				}
-				else
-				{
-					foreach (var item in enu)
-					{
-						count++;
-					}
-				}
-
-				writer.Write (count.ToString ());
-				writer.Write ((char) 0x000C);
-
-				foreach (var item in enu)
-				{
-					WriteObject (item, writer);
-				}
-
-				return;
-			}
-
-			foreach (var getter in Helpers.GetterCollection.FromType (obj.GetType ()))
-			{
-				WriteObject (getter.Method (obj), writer);
-			}
-		}
-
-
-		public static void WriteObject (object obj, TextWriter writer)
-		{
-			if (IsPrimitiveType (obj))
-			{
+				writer.Write (Separator);
 				writer.Write (PrimitiveToString (obj));
-				writer.Write ((char) 0x000C);
 				return;
 			}
 
@@ -160,13 +146,13 @@ namespace Lison
 			{
 				var dict = obj as IDictionary;
 
+				writer.Write (Separator);
 				writer.Write (dict.Count.ToString ());
-				writer.Write ((char) 0x000C);
 
 				foreach (DictionaryEntry k in dict)
 				{
-					WriteObject (k.Key, writer);
-					WriteObject (k.Value, writer);
+					WriteObject (writer, k.Key);
+					WriteObject (writer, k.Value);
 				}
 
 				return;
@@ -189,20 +175,33 @@ namespace Lison
 					}
 				}
 
+				writer.Write (Separator);
 				writer.Write (count.ToString ());
-				writer.Write ((char) 0x000C);
 
 				foreach (var item in enu)
 				{
-					WriteObject (item, writer);
+					WriteObject (writer, item);
 				}
 
 				return;
 			}
 
-			foreach (var getter in Helpers.GetterCollection.FromType (obj.GetType ()))
+
+			if (obj == null)
 			{
-				WriteObject (getter.Method (obj), writer);
+				writer.Write (Separator);
+				writer.Write ('0');
+				writer.Write (Separator);
+			}
+			else
+			{
+				writer.Write (Separator);
+				writer.Write (Separator);
+
+				foreach (var getter in Helpers.GetterCollection.FromType (obj.GetType ()))
+				{
+					WriteObject (writer, getter.Method (obj));
+				}
 			}
 		}
 
@@ -220,19 +219,6 @@ namespace Lison
 			       obj is byte [];
 		}
 
-		private static bool IsPrimitiveType (Type obj)
-		{
-			return obj == typeof (DBNull) ||
-			       obj == typeof (string) || obj == typeof (char) ||
-			       obj == typeof (Guid) || obj == typeof (Enum) ||
-			       obj == typeof (bool) || obj == typeof (DateTime) ||
-			       obj == typeof (int) || obj == typeof (long) || obj == typeof (double) ||
-			       obj == typeof (decimal) || obj == typeof (float) ||
-			       obj == typeof (byte) || obj == typeof (short) ||
-			       obj == typeof (sbyte) || obj == typeof (ushort) ||
-			       obj == typeof (uint) || obj == typeof (ulong) ||
-			       obj == typeof (byte []);
-		}
 
 		private static string PrimitiveToString (object obj)
 		{
