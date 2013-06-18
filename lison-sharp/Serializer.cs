@@ -2,16 +2,59 @@
 {
     using System;
     using System.Collections;
+    using System.Collections.Generic;
     using System.Globalization;
     using System.IO;
+    using System.Linq;
+
+    public class StringTable
+    {
+        private Dictionary <string, int> table = new Dictionary <string, int> ();
+        private List <string> data = new List <string> ();
+
+        public int AddEntry (string str)
+        {
+            int index;
+            if (!table.TryGetValue (str, out index))
+            {
+                index = data.Count;
+                data.Add (str);
+                table.Add (str, index);
+            }
+
+            return index;
+        }
+
+        public void Dump (TextWriter writer, char separator)
+        {
+            foreach (var str in data)
+            {
+                writer.Write (separator);
+                writer.Write (str);
+            }
+
+            writer.Write (separator);
+            writer.Write (data.Count.ToString(CultureInfo.InvariantCulture));
+        }
+    }
 
     public static class Serializer
     {
         public const string Version = "LiSON1";
         public const char Separator = '|';
 
+        public static string Serialize <T> (T obj)
+        {
+            var writer = new StringWriter ();
+            Serialize (writer, obj);
+
+            return writer.ToString ();
+        }
+
         public static void Serialize <T> (TextWriter writer, T obj)
         {
+            StringTable table = new StringTable ();
+
             // Write version number.
             writer.Write (Version);
 
@@ -20,15 +63,30 @@
             writer.Write (TypeDefinition.ForType (typeof (T)).Definition);
 
             // Write object data.
-            WriteObject (writer, obj);
+            WriteObject (writer, obj, table);
+
+            // Write string table
+            table.Dump (writer, Separator);
         }
 
-        private static void WriteObject (TextWriter writer, object obj )
+        private static void WriteObject (TextWriter writer, object obj, StringTable table)
         {
             if (IsPrimitiveType (obj))
             {
                 writer.Write (Separator);
-                writer.Write (PrimitiveToString (obj));
+
+                if (obj is String)
+                {
+                    if (!String.IsNullOrEmpty ((string) obj))
+                    {
+                        writer.Write (PrimitiveToString (table.AddEntry (obj as String) + 1));    
+                    }
+                }
+                else
+                {
+                    writer.Write (PrimitiveToString (obj));
+                }
+
                 return;
             }
 
@@ -41,8 +99,8 @@
 
                 foreach (DictionaryEntry k in dict)
                 {
-                    WriteObject (writer, k.Key);
-                    WriteObject (writer, k.Value);
+                    WriteObject (writer, k.Key, table);
+                    WriteObject (writer, k.Value, table);
                 }
 
                 return;
@@ -50,27 +108,16 @@
 
             if (obj is IEnumerable)
             {
-                var enu = obj as IEnumerable;
-                int count = 0;
-
-                if (enu is ICollection)
-                {
-                    count = (enu as ICollection).Count;
-                }
-                else
-                {
-                    foreach (var item in enu)
-                    {
-                        count++;
-                    }
-                }
-
+                ICollection collection = (obj is ICollection) 
+                    ? (ICollection) obj
+                    : ((IEnumerable) obj).Cast<Object> ().ToArray ();
+                
                 writer.Write (Separator);
-                writer.Write (count.ToString ());
+                writer.Write (collection.Count.ToString (CultureInfo.InvariantCulture));
 
-                foreach (var item in enu)
+                foreach (var item in collection)
                 {
-                    WriteObject (writer, item);
+                    WriteObject (writer, item, table);
                 }
 
                 return;
@@ -88,7 +135,7 @@
 
                 foreach (var getter in Helpers.GetterCollection.FromType (obj.GetType ()))
                 {
-                    WriteObject (writer, getter.Method (obj));
+                    WriteObject (writer, getter.Method (obj), table);
                 }
             }
         }
@@ -118,6 +165,13 @@
             {
                 return (string) obj;
             }
+
+            /*
+            if (obj is string)
+            {
+                return SentenceCompressor.Compress ((string) obj);
+            }
+            */
 
             if (obj is Guid)
             {

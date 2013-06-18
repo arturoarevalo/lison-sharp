@@ -47,7 +47,9 @@
     <Compile Include="Helpers\Getter.cs" />
     <Compile Include="Helpers\GetterCollection.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="SentenceCompressor.cs" />
     <Compile Include="Serializer.cs" />
+    <Compile Include="StringBuilderExtensions.cs" />
     <Compile Include="TypeDefinition.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

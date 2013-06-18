@@ -2,6 +2,7 @@
 
 namespace Lison
 {
+    using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using System.Reflection;
@@ -34,6 +35,15 @@ namespace Lison
             public string Name { get; set; }
             public string Address { get; set; }
             public Additional[] AdditionalData { get; set; }
+
+            public Card ()
+            {
+                Id = GetRandomInteger (5000);
+                Name = "This is a small string";
+                Address = "Nothing is more difficult, and therefore more precious, than to be able to decide";
+                AdditionalData = Enumerable.Range (0, 5).Select (y => new Additional ()).ToArray ();
+
+            }
         }
 
         class Additional
@@ -41,6 +51,15 @@ namespace Lison
             public string Field1 { get; set; }
             public string Field2 { get; set; }
             public string Field3 { get; set; }
+
+            public Additional ()
+            {
+                Field1 = "this is an example of what works very well with smaz";
+                Field2 = "the end";
+                Field2 = null;
+                Field3 = "Nel mezzo del cammin di nostra vita, mi ritrovai in una selva oscura";
+                Field3 = "";
+            }
         }
 
 		private static void Main (string [] args)
@@ -62,9 +81,18 @@ namespace Lison
 		                      })
 		        .ToArray ();
 
-			var writer = new StringWriter ();
+		    var test2 = new Dictionary <string, Card>
+		                {
+		                    { "Key1", new Card () },
+		                    { "Key2", new Card () },
+		                    { "Key3", new Card () },
+		                    { "Key4", new Card () },
+		                    { "Key5", new Card () }
+		                };
 
-            Serializer.Serialize (writer, test);
+                var writer = new StringWriter ();
+
+            Serializer.Serialize (writer, test2);
 
 //			System.Console.WriteLine (writer.ToString ());
             System.IO.File.WriteAllText ("c:\\tmp\\test.lison", writer.ToString ());
