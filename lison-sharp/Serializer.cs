@@ -53,20 +53,27 @@
 
         public static void Serialize <T> (TextWriter writer, T obj)
         {
-            StringTable table = new StringTable ();
+			var typeWriter = TypeWriterFactory.CreateInstance (new InitializationContext (typeof (T)));
 
-            // Write version number.
+			var context = new SerializationContext
+			{
+				Writer = writer,
+				Separator = Separator,
+				StringTable = new StringTable ()
+			};
+
+			// Write version number.
             writer.Write (Version);
 
             // Write type definition.
             writer.Write (Separator);
-            writer.Write (TypeDefinition.ForType (typeof (T)).Definition);
-
-            // Write object data.
-            WriteObject (writer, obj, table);
+			writer.Write (typeWriter.Definition);
+	
+			// Write object data.
+			typeWriter.Write (context, obj);
 
             // Write string table
-            table.Dump (writer, Separator);
+            context.StringTable.Dump (writer, Separator);
         }
 
         private static void WriteObject (TextWriter writer, object obj, StringTable table)

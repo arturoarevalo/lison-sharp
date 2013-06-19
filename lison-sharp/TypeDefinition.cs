@@ -1,7 +1,9 @@
 ﻿namespace Lison
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
+    using System.Globalization;
     using System.IO;
     using System.Linq;
     using System.Text;
@@ -10,6 +12,7 @@
     {
         public TextWriter Writer { get; set; }
         public char Separator { get; set; }
+		public StringTable StringTable { get; set; }
     }
 
     public class InitializationContext
@@ -17,6 +20,13 @@
         public Type Type { get; set; }
         public bool InlineStrings { get; set; }
         public bool AsMember { get; set; }
+
+		public InitializationContext (Type type)
+		{
+			Type = type;
+			InlineStrings = true;
+			AsMember = false;
+		}
 
         public InitializationContext (InitializationContext parent)
         {
@@ -31,7 +41,6 @@
             InlineStrings = parent.InlineStrings;
             AsMember = parent.AsMember;
         }
-
 
         public bool IsGenericDictionary ()
         {
@@ -94,7 +103,7 @@
     {
         public string Definition { get; protected set; }
 
-        protected abstract void Write (SerializationContext context, object obj);
+        public abstract void Write (SerializationContext context, object obj);
     }
 
     public static class TypeWriterFactory {
@@ -142,7 +151,7 @@
                     return new StringTableTypeWriter (context);
                 }
 
-                return new UnknownTypeWriter ();
+                return new UnknownTypeWriter (context);
             }
 
             // Dictionaries.
@@ -152,30 +161,13 @@
             }
 
             // Enumerations.
-            if (type.IsArray || IsGenericEnumerable (type))
+			if (context.Type.IsArray || context.IsGenericEnumerable ())
             {
-                Type elementType = type.IsArray ? type.GetElementType () : type.GetGenericArguments ()[0];
-
-                builder.Append (member ? "<a" : "<A");
-                WriteType (elementType, builder, false);
-                builder.Append (member ? "/a" : "/A");
-
-                return;
+                return new ArrayTypeWriter (context);
             }
 
             // Objects.
-            builder.Append (member ? "<o" : "<O");
-            foreach (var getter in Helpers.GetterCollection.FromType (type))
-            {
-                builder.Append (getter.Name);
-                WriteType (getter.PropertyType, builder, true);
-            }
-            builder.Append (member ? "/o" : "/O");
-
-
-            value.Initialize (context);
-
-            return value;
+			return new ObjectTypeWriter (context);
         }
 
     }
@@ -187,7 +179,7 @@
             Definition = context.AsMember ? "#b" : "#B";
         }
 
-        protected override void Write (SerializationContext context, object obj)
+        public override void Write (SerializationContext context, object obj)
         {
             throw new NotImplementedException ();
         }
@@ -200,7 +192,7 @@
             Definition = context.AsMember ? "#i" : "#I";
         }
 
-        protected override void Write (SerializationContext context, object obj)
+		public override void Write (SerializationContext context, object obj)
         {
             throw new NotImplementedException ();
         }
@@ -213,7 +205,7 @@
             Definition = context.AsMember ? "#f" : "#F";
         }
 
-        protected override void Write (SerializationContext context, object obj)
+		public override void Write (SerializationContext context, object obj)
         {
             throw new NotImplementedException ();
         }
@@ -227,7 +219,7 @@
             Definition = context.AsMember ? "#t" : "#T";
         }
 
-        protected override void Write (SerializationContext context, object obj)
+		public override void Write (SerializationContext context, object obj)
         {
             throw new NotImplementedException ();
         }
@@ -240,11 +232,24 @@
             Definition = context.AsMember ? "#s" : "#S";
         }
 
-        protected override void Write (SerializationContext context, object obj)
+		public override void Write (SerializationContext context, object obj)
         {
             throw new NotImplementedException ();
         }
     }
+
+	public class UnknownTypeWriter : AbstractTypeWriter
+	{
+		public UnknownTypeWriter (InitializationContext context)
+		{
+			Definition = context.AsMember ? "#s" : "#S";
+		}
+
+		public override void Write (SerializationContext context, object obj)
+		{
+			throw new NotImplementedException ();
+		}
+	}
 
     public class DictionaryTypeWriter : AbstractTypeWriter
     {
@@ -262,14 +267,92 @@
                          + (context.AsMember ? "/d" : "/D");
         }
 
-        protected override void Write (SerializationContext context, object obj)
+		public override void Write (SerializationContext context, object obj)
         {
-            throw new NotImplementedException ();
+			if (obj == null)
+			{
+				context.Writer.Write (context.Separator);
+				context.Writer.Write ("0");
+			}
+			else
+			{
+				var dict = (IDictionary) obj;
+
+				context.Writer.Write (context.Separator);
+				context.Writer.Write (dict.Count.ToString (CultureInfo.InvariantCulture));
+
+				foreach (DictionaryEntry k in dict)
+				{
+
+					WriteObject (writer, k.Key, table);
+					WriteObject (writer, k.Value, table);
+				}
+			}
         }
     }
 
+	public class ArrayTypeWriter : AbstractTypeWriter
+	{
+		public AbstractTypeWriter ValueTypeWriter
+		{
+			get;
+			protected set;
+		}
 
-    public class TypeDefinition
+		public ArrayTypeWriter (InitializationContext context)
+		{
+			Type elementType = context.Type.IsArray ? context.Type.GetElementType () : context.Type.GetGenericArguments () [0];
+
+			ValueTypeWriter = TypeWriterFactory.CreateInstance (new InitializationContext (context, elementType)
+			{
+				AsMember = false
+			});
+
+			Definition = (context.AsMember ? "<a" : "<A")
+						 + ValueTypeWriter.Definition
+						 + (context.AsMember ? "/a" : "/A");
+		}
+
+		public override void Write (SerializationContext context, object obj)
+		{
+			throw new NotImplementedException ();
+		}
+	}
+
+	public class ObjectTypeWriter : AbstractTypeWriter
+	{
+		public AbstractTypeWriter [] Writers { get; protected set; }
+
+		public ObjectTypeWriter (InitializationContext context)
+		{
+			var builder = new StringBuilder ();
+			var writers = new List <AbstractTypeWriter> ();
+
+			builder.Append (context.AsMember ? "<o" : "<O");
+			foreach (var getter in Helpers.GetterCollection.FromType (context.Type))
+			{
+				var writer = TypeWriterFactory.CreateInstance (new InitializationContext (context, getter.PropertyType)
+				{
+					AsMember = true
+				});
+
+				builder.Append (getter.Name);
+				builder.Append (writer.Definition);
+				writers.Add (writer);
+			}
+			builder.Append (context.AsMember ? "/o" : "/O");
+
+			Definition = builder.ToString ();
+			Writers = writers.ToArray ();
+		}
+
+		public override void Write (SerializationContext context, object obj)
+		{
+			throw new NotImplementedException ();
+		}
+	}
+
+	public class TypeDefinition
     {
         public string Definition { get; protected set; }
 
